@@ -3,20 +3,37 @@ import sqlite3
 import hashlib
 import json
 import os
-from datetime import datetime
+import requests
 
 # --- CONFIG ---
 DB_PATH = "Estudio_Chaintiou.db"
 USUARIOS_FILE = "usuarios.json"
+DRIVE_ID = "1EGNLpJ3czGCd83b6i4IJxazi3PdWxvnB"  # TU ID
 
-# --- INICIALIZAR ARCHIVOS ---
+# --- DESCARGAR DB ---
+@st.cache_resource
+def descargar_db():
+    if not os.path.exists(DB_PATH):
+        st.info("Descargando base de datos desde Google Drive...")
+        url = f"https://drive.google.com/uc?export=download&id={DRIVE_ID}"
+        try:
+            r = requests.get(url, stream=True)
+            r.raise_for_status()
+            with open(DB_PATH, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            st.success("Base de datos descargada")
+        except Exception as e:
+            st.error(f"Error al descargar: {e}")
+            st.stop()
+    return DB_PATH
+
+# --- INICIALIZAR ---
 if not os.path.exists(USUARIOS_FILE):
     default = {u: hashlib.md5("1234".encode()).hexdigest() for u in ["admin", "ariel", "fiorella", "daiana", "matias"]}
     json.dump(default, open(USUARIOS_FILE, "w"), indent=4)
 
-if not os.path.exists(DB_PATH):
-    st.error("Base de datos no encontrada. Ejecuta la app de escritorio primero.")
-    st.stop()
+descargar_db()
 
 # --- CONEXIÓN DB ---
 def get_conn():
@@ -43,7 +60,6 @@ if not st.session_state.logged:
             st.error("Credenciales incorrectas")
     st.stop()
 
-# --- LOGOUT ---
 if st.sidebar.button("Cerrar sesión"):
     st.session_state.logged = False
     st.session_state.user = ""
@@ -51,10 +67,7 @@ if st.sidebar.button("Cerrar sesión"):
 
 st.sidebar.success(f"**{st.session_state.user.upper()}**")
 
-# --- PESTAÑAS ---
-tab1, tab2, tab3, tab4 = st.tabs(["Clientes", "Facturas", "Pagos", "Impuestos"])
-
-# --- FUNCIÓN VALIDAR CUIT ---
+# --- VALIDAR CUIT ---
 def validar_cuit(cuit):
     cuit = ''.join(filter(str.isdigit, str(cuit)))
     if len(cuit) != 11: return False
@@ -62,6 +75,9 @@ def validar_cuit(cuit):
     s = sum(int(cuit[i])*m[i] for i in range(10))
     v = 11 - s%11 if s%11 != 0 else 0
     return v == int(cuit[10])
+
+# --- PESTAÑAS ---
+tab1, tab2, tab3, tab4 = st.tabs(["Clientes", "Facturas", "Pagos", "Impuestos"])
 
 # ================== CLIENTES ==================
 with tab1:
@@ -102,28 +118,28 @@ with tab1:
     # --- BUSCAR ---
     st.subheader("Buscar Cliente")
     col1, col2 = st.columns([1, 3])
-    tipo_busqueda = col1.selectbox("Buscar por", ["CUIT", "Apellido", "ID"])
-    valor = col2.text_input("Valor")
-    if st.button("Buscar"):
+    tipo_busqueda = col1.selectbox("Buscar por", ["CUIT", "Apellido", "ID"], key="busq_cli")
+    valor = col2.text_input("Valor", key="val_cli")
+    if st.button("Buscar", key="btn_cli"):
         with get_conn() as conn:
             cur = conn.cursor()
             if tipo_busqueda == "CUIT":
                 cur.execute("SELECT * FROM clientes WHERE cuit=?", (valor,))
             elif tipo_busqueda == "Apellido":
-                cur.execute("SELECT * FROM clientes WHERE apellido=?", (valor,))
+                cur.execute("SELECT * FROM clientes WHERE apellido LIKE ?", (f"%{valor}%",))
             else:
                 cur.execute("SELECT * FROM clientes WHERE id_cliente=?", (valor,))
             r = cur.fetchone()
             if r:
-                st.session_state.cliente_edit = dict(r)
+                st.session_state.edit_cliente = dict(r)
                 st.rerun()
             else:
                 st.error("No encontrado")
 
-    if 'cliente_edit' in st.session_state:
-        c = st.session_state.cliente_edit
+    if 'edit_cliente' in st.session_state:
+        c = st.session_state.edit_cliente
         st.info(f"Editando: {c['nombre']} {c['apellido']} (ID: {c['id_cliente']})")
-        # Aquí puedes rellenar el form con st.experimental_rerun()
+        # Puedes rellenar el form con st.rerun()
 
     # --- TABLA ---
     with get_conn() as conn:
@@ -137,17 +153,125 @@ with tab1:
 # ================== FACTURAS ==================
 with tab2:
     st.header("Facturas")
-    # Similar a clientes...
-    st.write("Próximamente: agregar, modificar, buscar facturas")
+    
+    with st.expander("Agregar / Modificar Factura", expanded=True):
+        with st.form("form_factura"):
+            col1, col2 = st.columns(2)
+            id_cliente = col1.number_input("ID Cliente", min_value=1)
+            fecha_emision = col2.date_input("Fecha Emisión")
+            monto_total = col1.number_input("Monto Total", min_value=0.0, format="%.2f")
+            descripcion = col2.text_area("Descripción")
+            estado = col1.selectbox("Estado", ["Pendiente", "Pagada", "Vencida"])
+            fecha_vencimiento = col2.date_input("Fecha Vencimiento")
+            factura_id = st.text_input("ID (para modificar)", disabled=True)
+            submit = st.form_submit_button("Guardar")
+            
+            if submit:
+                with get_conn() as conn:
+                    cur = conn.cursor()
+                    if factura_id:
+                        cur.execute("""UPDATE facturas SET id_cliente=?, fecha_emision=?, monto_total=?, descripcion=?, estado=?, fecha_vencimiento=?
+                                       WHERE id_factura=?""", (id_cliente, fecha_emision, monto_total, descripcion, estado, fecha_vencimiento, factura_id))
+                    else:
+                        cur.execute("""INSERT INTO facturas (id_cliente, fecha_emision, monto_total, descripcion, estado, fecha_vencimiento)
+                                       VALUES (?, ?, ?, ?, ?, ?)""", (id_cliente, fecha_emision, monto_total, descripcion, estado, fecha_vencimiento))
+                    conn.commit()
+                    st.success("Factura guardada")
+                    st.rerun()
+
+    # --- BUSCAR ---
+    st.subheader("Buscar Factura")
+    id_busq = st.text_input("ID Factura")
+    if st.button("Buscar Factura"):
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM facturas WHERE id_factura=?", (id_busq,))
+            r = cur.fetchone()
+            if r:
+                st.session_state.edit_factura = dict(r)
+                st.rerun()
+            else:
+                st.error("No encontrada")
+
+    # --- TABLA ---
+    with get_conn() as conn:
+        facturas = conn.execute("SELECT * FROM facturas").fetchall()
+        if facturas:
+            data = [dict(row) for row in facturas]
+            st.dataframe(data, use_container_width=True)
+        else:
+            st.info("No hay facturas")
 
 # ================== PAGOS ==================
 with tab3:
     st.header("Pagos")
-    st.write("Próximamente: registrar pagos")
+    
+    with st.expander("Agregar / Modificar Pago", expanded=True):
+        with st.form("form_pago"):
+            col1, col2 = st.columns(2)
+            id_factura = col1.number_input("ID Factura", min_value=1)
+            fecha_pago = col2.date_input("Fecha Pago")
+            metodo_pago = col1.selectbox("Método", ["Efectivo", "Transferencia", "Tarjeta", "Cheque"])
+            nota = col2.text_area("Nota")
+            pago_id = st.text_input("ID (para modificar)", disabled=True)
+            submit = st.form_submit_button("Guardar")
+            
+            if submit:
+                with get_conn() as conn:
+                    cur = conn.cursor()
+                    if pago_id:
+                        cur.execute("""UPDATE pagos SET id_factura=?, fecha_pago=?, metodo_pago=?, nota=?
+                                       WHERE id_pago=?""", (id_factura, fecha_pago, metodo_pago, nota, pago_id))
+                    else:
+                        cur.execute("""INSERT INTO pagos (id_factura, fecha_pago, metodo_pago, nota)
+                                       VALUES (?, ?, ?, ?)""", (id_factura, fecha_pago, metodo_pago, nota))
+                    conn.commit()
+                    st.success("Pago guardado")
+                    st.rerun()
+
+    # --- TABLA ---
+    with get_conn() as conn:
+        pagos = conn.execute("SELECT * FROM pagos").fetchall()
+        if pagos:
+            data = [dict(row) for row in pagos]
+            st.dataframe(data, use_container_width=True)
+        else:
+            st.info("No hay pagos")
 
 # ================== IMPUESTOS ==================
 with tab4:
     st.header("Impuestos")
-    st.write("Próximamente: gestionar impuestos")
+    
+    with st.expander("Agregar / Modificar Impuesto", expanded=True):
+        with st.form("form_impuesto"):
+            col1, col2 = st.columns(2)
+            id_cliente = col1.number_input("ID Cliente", min_value=1)
+            tipo = col2.text_input("Tipo")
+            fecha_a_pagar = col1.date_input("Fecha a Pagar")
+            monto = col2.number_input("Monto", min_value=0.0, format="%.2f")
+            impuesto_id = st.text_input("ID (para modificar)", disabled=True)
+            submit = st.form_submit_button("Guardar")
+            
+            if submit:
+                with get_conn() as conn:
+                    cur = conn.cursor()
+                    if impuesto_id:
+                        cur.execute("""UPDATE impuestos SET id_cliente=?, tipo=?, fecha_a_pagar=?, monto=?
+                                       WHERE id_impuesto=?""", (id_cliente, tipo, fecha_a_pagar, monto, impuesto_id))
+                    else:
+                        cur.execute("""INSERT INTO impuestos (id_cliente, tipo, fecha_a_pagar, monto)
+                                       VALUES (?, ?, ?, ?)""", (id_cliente, tipo, fecha_a_pagar, monto))
+                    conn.commit()
+                    st.success("Impuesto guardado")
+                    st.rerun()
 
-st.sidebar.info("Sistema Contable - Versión Web")
+    # --- TABLA ---
+    with get_conn() as conn:
+        impuestos = conn.execute("SELECT * FROM impuestos").fetchall()
+        if impuestos:
+            data = [dict(row) for row in impuestos]
+            st.dataframe(data, use_container_width=True)
+        else:
+            st.info("No hay impuestos")
+
+st.sidebar.info("Sistema Contable Completo - Web en la Nube")
