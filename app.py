@@ -122,10 +122,10 @@ with tab1:
         with st.form("form_cliente"):
             col1, col2 = st.columns(2)
             nombre = col1.text_input("Nombre")
-            apellido = col2.text_input("Apellido")
+            apellido = col1.text_input("Apellido")
             cuit = col1.text_input("CUIT")
             domicilio = col2.text_input("Domicilio")
-            telefono = col1.text_input("Teléfono")
+            telefono = col2.text_input("Teléfono")
             email = col2.text_input("Email")
             cliente_id = st.text_input("ID (para modificar)", disabled=True)
             submit = st.form_submit_button("Guardar")
