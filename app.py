@@ -41,31 +41,66 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-# --- LOGIN ---
+# ========================= LOGIN & CAMBIO DE CONTRASEÑA =========================
 if 'logged' not in st.session_state:
     st.session_state.logged = False
     st.session_state.user = ""
 
+# ---- CAMBIO DE CONTRASEÑA ----
+if st.session_state.logged:
+    with st.sidebar.expander("Cambiar contraseña", expanded=False):
+        nueva = st.text_input("Nueva contraseña", type="password", key="nueva")
+        repetir = st.text_input("Repetir contraseña", type="password", key="repetir")
+        if st.button("Actualizar contraseña"):
+            if nueva == repetir and len(nueva) >= 4:
+                usuarios = json.load(open(USUARIOS_FILE))
+                usuarios[st.session_state.user] = hashlib.md5(nueva.encode()).hexdigest()
+                json.dump(usuarios, open(USUARIOS_FILE, "w"), indent=4)
+                st.success("¡Contraseña actualizada!")
+                st.rerun()
+            else:
+                st.error("Las contraseñas no coinciden o son muy cortas")
+
+    if st.sidebar.button("Cerrar sesión"):
+        st.session_state.logged = False
+        st.session_state.user = ""
+        st.rerun()
+
+# ---- LOGIN ----
 if not st.session_state.logged:
-    st.title("Estudio Chaintiou - Login")
-    user = st.text_input("Usuario", value="admin")
-    pwd = st.text_input("Contraseña", type="password", value="1234")
-    if st.button("Entrar"):
-        usuarios = json.load(open(USUARIOS_FILE))
-        if user in usuarios and usuarios[user] == hashlib.md5(pwd.encode()).hexdigest():
-            st.session_state.logged = True
-            st.session_state.user = user
-            st.rerun()
-        else:
-            st.error("Credenciales incorrectas")
+    st.title("Estudio Chaintiou - Sistema Contable")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.image("https://i.imgur.com/5zq2R0J.png", width=200)  # opcional logo
+    with col2:
+        user = st.text_input("Usuario", value="admin")
+        pwd = st.text_input("Contraseña", type="password", value="1234")
+        if st.button("INGRESAR", type="primary", use_container_width=True):
+            usuarios = json.load(open(USUARIOS_FILE))
+            if user in usuarios and usuarios[user] == hashlib.md5(pwd.encode()).hexdigest():
+                st.session_state.logged = True
+                st.session_state.user = user
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos")
     st.stop()
 
-if st.sidebar.button("Cerrar sesión"):
-    st.session_state.logged = False
-    st.session_state.user = ""
-    st.rerun()
-
 st.sidebar.success(f"**{st.session_state.user.upper()}**")
+
+# ========================= TEMAS =========================
+temas = {
+    "Claro (predeterminado)": "light",
+    "Oscuro": "dark",
+    "Azul": "blue",
+    "Verde": "green",
+    "Violeta": "purple",
+    "Naranja": "orange"
+}
+
+tema_elegido = st.sidebar.selectbox("Tema", options=list(temas.keys()), index=0)
+st.set_page_config(page_title="Estudio Chaintiou", layout="wide")
+if temas[tema_elegido] != "light":
+    st.markdown(f'<style>body {{background-color: var(--background-color-{temas[tema_elegido]});}}</style>', unsafe_allow_html=True)
 
 # --- VALIDAR CUIT ---
 def validar_cuit(cuit):
